@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 1 — Qdrant**.
+We build it **one layer at a time**. Current stop: **Step 2 — load documents**.
 
 ## Architecture (target)
 
@@ -55,4 +55,34 @@ Success looks like: `Qdrant reachable`, collection Cosine size 384, pytest passe
 
 Dashboard: http://localhost:6333/dashboard
 
-Stop here. Step 2 is loading markdown incidents.
+## Step 2 — Document loading
+
+Raw markdown is not a search record. The loader (`src/ingestion/loader.py`) reads `data/incidents/*.md` and returns a **normalized dict**:
+
+```json
+{
+  "incident_id": "INC-2841",
+  "title": "Aerospike Timeout During Peak Traffic",
+  "service": "fraud",
+  "severity": "SEV1",
+  "content": "..."
+}
+```
+
+**Why preprocess.** Files have headings, blank lines, and human labels (`Fraud Detection` vs `fraud`). Retrieval later needs stable keys for filters and a single `content` string to chunk.
+
+**Why metadata is separate from the body.** `service` and `severity` are exact fields for Qdrant payload filters (Step 7). If you only stuffed them into the embedded text, a query could not reliably say “only SEV1 fraud.” The body still contains those words for semantic search; metadata is the structured copy.
+
+**Why similar incidents.** Several docs mention Aerospike timeouts, payment latency, and pool exhaustion with *different* root causes. That makes retrieval non-trivial later.
+
+Qdrant is unused this step.
+
+```bash
+source .venv/bin/activate
+python scripts/load_documents.py
+pytest tests/test_loader.py -v
+```
+
+Expect ~19 documents and parsed `INC-2841` with `service: fraud`.
+
+Stop here. Step 3 is chunking.
