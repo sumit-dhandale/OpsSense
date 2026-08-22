@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 3 — chunking**.
+We build it **one layer at a time**. Current stop: **Step 4 — embeddings**.
 
 ## Architecture (target)
 
@@ -117,4 +117,28 @@ python scripts/chunk_documents.py
 pytest tests/test_chunker.py -v
 ```
 
-Stop here. Step 4 is embeddings.
+## Step 4 — Embeddings
+
+An **embedding** is a list of floats (here **384** dimensions). The model maps text into a space where paraphrases land nearby even if they share few keywords.
+
+`all-MiniLM-L6-v2` via `sentence-transformers`. API:
+
+- `embed(text) -> vector`
+- `embed_batch(texts) -> vectors`
+
+We set `normalize_embeddings=True`, so **cosine similarity** equals **dot product**. **Euclidean** distance would care about vector length; we do not use it. Qdrant’s collection (Step 1) already uses **Cosine** for the same reason.
+
+A cosine of `0.8` is **not** “80% chance this is the RCA.” It only means “closer than 0.2 in this space.”
+
+Experiment: two ops phrases vs sports — keyword overlap is weak on the first pair, semantic closeness should still win.
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+python scripts/embedding_similarity.py
+pytest tests/test_embedder.py -v
+```
+
+First run downloads the model. Qdrant is unused this step.
+
+Stop here. Step 5 is storing vectors in Qdrant.
