@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 4 — embeddings**.
+We build it **one layer at a time**. Current stop: **Step 5 — index into Qdrant**.
 
 ## Architecture (target)
 
@@ -141,4 +141,36 @@ pytest tests/test_embedder.py -v
 
 First run downloads the model. Qdrant is unused this step.
 
-Stop here. Step 5 is storing vectors in Qdrant.
+## Step 5 — Store embeddings in Qdrant
+
+A vector database stores three things per **point**:
+
+1. `id` — UUID derived from `chunk_id`
+2. `vector` — 384 floats from MiniLM
+3. `payload` — JSON for display and later filters (not used in the distance calculation)
+
+```json
+{
+  "incident_id": "INC-2841",
+  "service": "fraud",
+  "severity": "SEV1",
+  "title": "Aerospike Timeout During Peak Traffic",
+  "chunk_index": 0,
+  "text": "..."
+}
+```
+
+Flow: load markdown → chunk → `embed_batch` → `upsert`. Recreate the collection so reruns stay consistent.
+
+Qdrant indexes the vectors (HNSW) so later search does not scan every point. We still do not query in this step — only write.
+
+```bash
+source .venv/bin/activate
+docker compose up -d
+python scripts/index_documents.py
+pytest tests/test_indexer.py -v
+```
+
+Expect `points_count` equal to the number of chunks (about 19 with default 500-word windows). Dashboard: http://localhost:6333/dashboard
+
+Stop here. Step 6 is vector search.
