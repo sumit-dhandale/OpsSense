@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 5 — index into Qdrant**.
+We build it **one layer at a time**. Current stop: **Step 6 — vector search**.
 
 ## Architecture (target)
 
@@ -173,4 +173,24 @@ pytest tests/test_indexer.py -v
 
 Expect `points_count` equal to the number of chunks (about 19 with default 500-word windows). Dashboard: http://localhost:6333/dashboard
 
-Stop here. Step 6 is vector search.
+## Step 6 — Vector search
+
+```
+query → MiniLM → query vector → Qdrant ANN (cosine) → top_k chunks
+```
+
+`search(query, top_k=5)` embeds the query with the **same** model used at index time (different model = garbage neighbors). Qdrant returns the nearest stored vectors. Each hit is `score`, `incident_id`, `title`, `service`, `severity`, `text`.
+
+**Score** is cosine similarity in this collection (higher = closer direction). It is **not** a probability and not “confidence this is the RCA.” Rank order matters more than the absolute number. Near-miss incidents can still score high because the corpus is small and thematically overlapping.
+
+Requires Step 5 data already in `incident_memory`.
+
+```bash
+source .venv/bin/activate
+python scripts/search.py "Fraud feature lookups are timing out because Aerospike is responding slowly."
+pytest tests/test_vector_search.py -v
+```
+
+Expect INC-2841 / INC-1923 / similar Aerospike-fraud incidents near the top.
+
+Stop here. Step 7 is metadata filtering.
