@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 6 — vector search**.
+We build it **one layer at a time**. Current stop: **Step 7 — metadata filtering**.
 
 ## Architecture (target)
 
@@ -193,4 +193,25 @@ pytest tests/test_vector_search.py -v
 
 Expect INC-2841 / INC-1923 / similar Aerospike-fraud incidents near the top.
 
-Stop here. Step 7 is metadata filtering.
+## Step 7 — Metadata filtering
+
+**Semantic search** ranks by meaning. A payments Redis timeout can still sit next to an Aerospike fraud incident.
+
+**Metadata filtering** is an exact match on payload (`service`, `severity`) *with* ANN. Qdrant only considers points that satisfy `must` conditions, then ranks those by cosine.
+
+```python
+search("Aerospike timeout", top_k=5, filters={"service": "fraud", "severity": "SEV1"})
+```
+
+Use filters when the operator already knows the service or SEV. Do not use them to express “sounds like fraud” — that is the vector’s job.
+
+```bash
+source .venv/bin/activate
+python scripts/search.py "Aerospike timeout"
+python scripts/search.py "Aerospike timeout" --filter service=fraud --filter severity=SEV1
+pytest tests/test_vector_search.py -v
+```
+
+Unfiltered top-k can include `payments` / `sessions`. Filtered results should all be `fraud` `SEV1` (e.g. INC-2841, INC-1407, INC-1744).
+
+Stop here. Step 8 is retrieval evaluation (Recall@k vs chunk size).

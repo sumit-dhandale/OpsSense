@@ -30,3 +30,14 @@ def test_vector_search_aerospike():
     assert hits[0]["title"] and hits[0]["text"]
     scores = [h["score"] for h in hits]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_metadata_filter_narrows_service_and_severity():
+    query = "Aerospike timeout"
+    filtered = search(
+        query, top_k=8, filters={"service": "fraud", "severity": "SEV1"}
+    )
+    assert filtered
+    assert all(h["service"] == "fraud" and h["severity"] == "SEV1" for h in filtered)
+    # INC-1923 is fraud but SEV2 — must be excluded by the severity filter.
+    assert all(h["incident_id"] != "INC-1923" for h in filtered)
