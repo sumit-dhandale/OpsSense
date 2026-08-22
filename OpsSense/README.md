@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 2 — load documents**.
+We build it **one layer at a time**. Current stop: **Step 3 — chunking**.
 
 ## Architecture (target)
 
@@ -85,4 +85,36 @@ pytest tests/test_loader.py -v
 
 Expect ~19 documents and parsed `INC-2841` with `service: fraud`.
 
-Stop here. Step 3 is chunking.
+## Step 3 — Chunking
+
+An embedding model turns **one string** into **one vector**. If that string is a whole postmortem, Aerospike timeouts get averaged with “added Grafana dashboards.” The query then matches a blur.
+
+**Chunk size** here is a count of whitespace-separated words (a stand-in for tokens, not MiniLM’s tokenizer). Default **500** with **100 overlap**.
+
+**Overlap** repeats the tail of chunk *n* at the start of chunk *n+1* so a sentence split on a boundary still exists intact in at least one chunk. Step is `chunk_size - overlap` (400 words).
+
+- **Too small:** fragments with no complete thought; more chunks; more noise in top-k.
+- **Too large:** mixed topics in one vector; the query can hit the wrong half of the doc.
+
+Every chunk copies metadata:
+
+```json
+{
+  "chunk_id": "INC-2841:2",
+  "incident_id": "INC-2841",
+  "service": "fraud",
+  "severity": "SEV1",
+  "chunk_index": 2,
+  "text": "..."
+}
+```
+
+Our sample incidents are short, so default 500 often yields **one chunk per file**. The demo script uses size 40 so you can see overlap.
+
+```bash
+source .venv/bin/activate
+python scripts/chunk_documents.py
+pytest tests/test_chunker.py -v
+```
+
+Stop here. Step 4 is embeddings.
