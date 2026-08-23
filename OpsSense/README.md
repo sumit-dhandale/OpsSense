@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 10 — hybrid search**.
+We build it **one layer at a time**. Current stop: **Step 11 — RAG**.
 
 ## Architecture (target)
 
@@ -274,4 +274,27 @@ pytest tests/test_hybrid_search.py -v
 
 Compare to `--mode vector` and `--mode keyword` on the same query.
 
-Stop here. Step 11 is RAG (LLM over retrieved incidents).
+## Step 11 — RAG
+
+Retrieval is still the source of facts. The LLM only **writes** over the top-k chunks.
+
+```
+query → hybrid (or vector) search → context string → LLM → answer + sources
+```
+
+The system prompt requires: use only retrieved text; similarity vs difference; historical RCA and fix; investigation ideas labeled as **hypotheses**; no invented RCA; say insufficient evidence if hits are weak.
+
+`LLM_PROVIDER=ollama|openai|gemini` (default **ollama**). HTTP via `httpx`, no LangChain.
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+# Ollama running locally, e.g. `ollama run llama3.2`
+export LLM_PROVIDER=ollama
+python scripts/ask.py "Why are fraud feature lookups timing out?"
+pytest tests/test_rag.py -v
+```
+
+OpenAI / Gemini: set `OPENAI_API_KEY` or `GEMINI_API_KEY` and `LLM_PROVIDER`. Unit tests do not call a live model.
+
+Stop here. Step 12 is FastAPI (`POST /index` `/search` `/ask`).
