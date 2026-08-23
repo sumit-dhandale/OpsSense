@@ -23,6 +23,7 @@ def search(
     filters: dict | None = None,
     embedder: Embedder | None = None,
     collection: str | None = None,
+    score_threshold: float | None = None,
 ) -> list[dict]:
     embedder = embedder or Embedder()
     client = get_client()
@@ -31,6 +32,7 @@ def search(
         query=embedder.embed(query),
         limit=top_k,
         query_filter=payload_filter(filters),
+        score_threshold=score_threshold,
         with_payload=True,
     )
     results = []

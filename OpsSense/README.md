@@ -2,23 +2,41 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 12 — API**.
+We build it **one layer at a time**. Current stop: **Step 13 — experiments** (full pipeline).
 
 ## Architecture (target)
 
 ```mermaid
 flowchart TB
-  subgraph ingest [Ingestion later]
+  subgraph ingest [Ingestion]
     MD[Markdown incidents]
     Loader[loader]
     Chunker[chunker]
     Embed[embedder]
     Indexer[indexer]
   end
-  subgraph store [Step 1 now]
-    Col[Qdrant collection incident_memory]
+  subgraph store [Qdrant]
+    Col[collection incident_memory]
+  end
+  subgraph retrieve [Retrieval]
+    Vec[vector_search]
+    Kw[keyword BM25]
+    Hyb[hybrid_search]
+    Filt[payload filters]
+  end
+  subgraph rag [RAG]
+    Ctx[context]
+    LLM[Ollama OpenAI Gemini]
   end
   MD --> Loader --> Chunker --> Embed --> Indexer --> Col
+  Query[query] --> Embed
+  Query --> Kw
+  Embed --> Vec
+  Col --> Vec
+  Col --> Filt
+  Vec --> Hyb
+  Kw --> Hyb
+  Hyb --> Ctx --> LLM
 ```
 
 ## Step 1 — What a vector database is
@@ -326,4 +344,44 @@ pytest tests/test_api.py -v
 
 Docs: http://localhost:8000/docs
 
-Stop here. Step 13 is experiments (models, top-k, threshold, hybrid, filters).
+## Step 13 — Experiments
+
+Index first (`python scripts/index_documents.py`). Gold set: [`tests/eval/queries.json`](tests/eval/queries.json). Fill the numbers from **your** run (models and Qdrant vary slightly).
+
+| # | What | Command | What to look for |
+| --- | --- | --- | --- |
+| 1 | Embedding models | `python scripts/compare_models.py` | L6 vs L12 MiniLM Recall@3/@5. Larger is not always better on 19 docs. |
+| 2 | Chunk size 200/500/1000 | `python scripts/eval_chunking.py` | These postmortems are short; 200/500/1000 often collapse to one chunk. |
+| 3 | Top-k 1/3/5/10 | `python scripts/run_experiments.py` | Recall rises with k; more noise in the RAG context. |
+| 4 | Score threshold | same + `python scripts/search.py "..." --score-threshold 0.7` | High cutoff drops useful near-misses. Cosine is not a probability. |
+| 5 | Keyword vs vector vs hybrid | `run_experiments.py` | Exact tokens vs paraphrase vs mix. |
+| 6 | Metadata filter | same | `service=fraud` removes Redis/Postgres false friends. |
+
+`run_experiments.py` also prints a demo ranking for `Aerospike timeout`.
+
+## Limitations
+
+- Word-split ≠ MiniLM tokens.
+- ~19 docs; in-memory BM25.
+- MiniLM is small; jargon can mismatch.
+- Hybrid is a linear mix, not reciprocal rank fusion.
+- The LLM can still ignore the prompt; we do not cite spans.
+- Eval gold is hand-labeled and overlapping on purpose.
+
+## Possible improvements
+
+RRF hybrid; real tokenizer chunking; cross-encoder rerank; parent-document retrieval; a larger labeled set. Not required to learn the pipeline.
+
+## Layout
+
+```
+data/incidents/          # postmortems
+src/ingestion/           # load, chunk, index
+src/embeddings/          # sentence-transformers
+src/retrieval/           # vector, BM25, hybrid
+src/rag/generator.py     # prompt + providers
+src/api/main.py          # three POSTs
+src/qdrant_store.py      # collection + cosine
+scripts/                 # setup, index, search, ask, experiments
+tests/eval/queries.json  # gold queries
+```

@@ -19,6 +19,7 @@ def main() -> None:
     p.add_argument("--mode", choices=["vector", "keyword", "hybrid"], default="vector")
     p.add_argument("--alpha", type=float, default=None, help="hybrid: weight on vector (default 0.7)")
     p.add_argument("--filter", action="append", default=[], help="key=value, e.g. service=fraud")
+    p.add_argument("--score-threshold", type=float, default=None)
     args = p.parse_args()
     filters = {}
     for item in args.filter:
@@ -30,7 +31,12 @@ def main() -> None:
     elif args.mode == "hybrid":
         hits = hybrid_search(args.query, top_k=args.top_k, alpha=args.alpha, filters=filters)
     else:
-        hits = search(args.query, top_k=args.top_k, filters=filters)
+        hits = search(
+            args.query,
+            top_k=args.top_k,
+            filters=filters,
+            score_threshold=args.score_threshold,
+        )
     for i, hit in enumerate(hits, 1):
         print(
             f"{i}. {hit['incident_id']} — {hit['title']}  "

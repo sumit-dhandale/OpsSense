@@ -16,6 +16,7 @@ class SearchBody(BaseModel):
     filters: dict | None = None
     mode: str = Field(default="vector", description="vector | hybrid")
     alpha: float | None = None
+    score_threshold: float | None = None
 
 
 class AskBody(BaseModel):
@@ -40,7 +41,10 @@ def search(body: SearchBody):
         )
     else:
         hits = vector_search(
-            body.query, top_k=body.top_k, filters=body.filters
+            body.query,
+            top_k=body.top_k,
+            filters=body.filters,
+            score_threshold=body.score_threshold,
         )
     return {"results": hits}
 
