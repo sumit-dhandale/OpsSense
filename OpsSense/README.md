@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 9 — keyword search**.
+We build it **one layer at a time**. Current stop: **Step 10 — hybrid search**.
 
 ## Architecture (target)
 
@@ -255,4 +255,23 @@ pytest tests/test_keyword_search.py -v
 
 Needs the Step 5 index for the CLI (scrolls Qdrant). Unit tests use a tiny in-memory corpus.
 
-Stop here. Step 10 is hybrid (weighted mix of both scores).
+## Step 10 — Hybrid search
+
+Vector and keyword lists use **different score scales**. Before mixing we min-max normalize **each list** to `[0, 1]`, then:
+
+`final = alpha * vector_score + (1 - alpha) * keyword_score`
+
+Default `alpha = 0.7` (favor semantic). A chunk only in one list gets `0` for the other after merge.
+
+Why both: paraphrase without shared tokens still ranks via vectors; `INC-2841`, `Aerospike`, and error codes still rank via BM25. Semantic-only often **drops** exact IDs because MiniLM treats them as noise.
+
+```bash
+source .venv/bin/activate
+python scripts/search.py "INC-2841 Aerospike timeout" --mode hybrid --alpha 0.7
+python scripts/search.py "feature store became slow" --mode hybrid
+pytest tests/test_hybrid_search.py -v
+```
+
+Compare to `--mode vector` and `--mode keyword` on the same query.
+
+Stop here. Step 11 is RAG (LLM over retrieved incidents).
