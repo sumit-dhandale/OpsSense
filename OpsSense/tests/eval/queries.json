@@ -1,0 +1,42 @@
+[
+  {
+    "query": "Fraud feature lookups are timing out because Aerospike is responding slowly.",
+    "relevant": ["INC-2841", "INC-1923", "INC-1407", "INC-1744"]
+  },
+  {
+    "query": "PaymentAuthorizationError Aerospike timeout while fetching fraud features",
+    "relevant": ["INC-2841", "INC-1721", "INC-2215"]
+  },
+  {
+    "query": "feature store became slow",
+    "relevant": ["INC-1510", "INC-1923", "INC-2841"]
+  },
+  {
+    "query": "Aerospike timeout",
+    "relevant": ["INC-2841", "INC-1407", "INC-1333", "INC-1744"]
+  },
+  {
+    "query": "Redis cache latency during checkout",
+    "relevant": ["INC-3102", "INC-3011"]
+  },
+  {
+    "query": "PostgreSQL connection pool exhaustion",
+    "relevant": ["INC-2650", "INC-1602"]
+  },
+  {
+    "query": "database deadlock on order updates",
+    "relevant": ["INC-2501"]
+  },
+  {
+    "query": "Kafka consumer lag on payment events",
+    "relevant": ["INC-2408", "INC-2390"]
+  },
+  {
+    "query": "gRPC timeout calling fraud service",
+    "relevant": ["INC-2215", "INC-2104"]
+  },
+  {
+    "query": "CPU saturation on fraud workers causing latency",
+    "relevant": ["INC-1988", "INC-1923"]
+  }
+]

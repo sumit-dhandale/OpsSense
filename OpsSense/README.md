@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 7 — metadata filtering**.
+We build it **one layer at a time**. Current stop: **Step 8 — retrieval evaluation**.
 
 ## Architecture (target)
 
@@ -214,4 +214,24 @@ pytest tests/test_vector_search.py -v
 
 Unfiltered top-k can include `payments` / `sessions`. Filtered results should all be `fraud` `SEV1` (e.g. INC-2841, INC-1407, INC-1744).
 
-Stop here. Step 8 is retrieval evaluation (Recall@k vs chunk size).
+## Step 8 — Retrieval evaluation
+
+Gold file: [`tests/eval/queries.json`](tests/eval/queries.json) — 10 queries, each with labeled relevant incident IDs.
+
+Hits are **chunks**. We collapse to unique `incident_id`s in rank order, then:
+
+**Recall@k** = (gold IDs that appear in the top-k unique incidents) / (number of gold IDs), averaged over queries.
+
+Compare chunk sizes **200 / 500 / 1000** with overlap = 20% of size. Re-index into `incident_memory_eval` so the Step 5 collection is left alone.
+
+Chunk size changes whether a distinctive sentence sits in a clean vector or is diluted (or split). There is no universally best size; this table is the measurement.
+
+```bash
+source .venv/bin/activate
+python scripts/eval_chunking.py
+pytest tests/test_eval_metrics.py -v
+```
+
+The script prints a table (`chunk`, `overlap`, `n` chunks, `R@3`, `R@5`). First run reloads MiniLM and indexes three times.
+
+Stop here. Step 9 is keyword / BM25 search.
