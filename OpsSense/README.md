@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 8 — retrieval evaluation**.
+We build it **one layer at a time**. Current stop: **Step 9 — keyword search**.
 
 ## Architecture (target)
 
@@ -234,4 +234,25 @@ pytest tests/test_eval_metrics.py -v
 
 The script prints a table (`chunk`, `overlap`, `n` chunks, `R@3`, `R@5`). First run reloads MiniLM and indexes three times.
 
-Stop here. Step 9 is keyword / BM25 search.
+## Step 9 — Keyword search (BM25)
+
+Vector search matches meaning. **BM25** matches query *terms* that actually appear in the chunk (with a classic IR weighting: rare words count more than “the”). We run it in-process with `rank_bm25` over the same texts stored in Qdrant — no extra search cluster.
+
+BM25 **scores are not cosine**. Do not compare `12.4` to `0.77` as if they were the same unit.
+
+- **Keyword wins:** exact tokens — `Aerospike`, `INC-2841`, error class names.
+- **Vector wins:** paraphrase — “feature store became slow” still finds Aerospike compaction if those words never appear together as the title’s synonym in other docs; conversely BM25 nails INC-1510 when the phrase is in the body.
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+python scripts/search.py "Aerospike timeout" --mode keyword
+python scripts/search.py "Aerospike timeout" --mode vector
+python scripts/search.py "feature store became slow" --mode keyword
+python scripts/search.py "feature store became slow" --mode vector
+pytest tests/test_keyword_search.py -v
+```
+
+Needs the Step 5 index for the CLI (scrolls Qdrant). Unit tests use a tiny in-memory corpus.
+
+Stop here. Step 10 is hybrid (weighted mix of both scores).
