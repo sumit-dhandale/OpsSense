@@ -63,7 +63,14 @@ def _complete_ollama(user: str) -> str:
         "stream": False,
     }
     with httpx.Client(timeout=120) as client:
-        r = client.post(url, json=payload)
+        try:
+            r = client.post(url, json=payload)
+        except httpx.ConnectError as exc:
+            raise RuntimeError(
+                f"Ollama is not reachable at {config.OLLAMA_URL}. "
+                "Start it with `ollama serve`, then `ollama pull llama3.2` "
+                "(or set LLM_PROVIDER=openai|gemini with an API key)."
+            ) from exc
         r.raise_for_status()
         return r.json()["message"]["content"]
 

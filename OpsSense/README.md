@@ -2,7 +2,7 @@
 
 RAG lab: given a production error snippet, retrieve similar historical incidents.
 
-We build it **one layer at a time**. Current stop: **Step 11 — RAG**.
+We build it **one layer at a time**. Current stop: **Step 12 — API**.
 
 ## Architecture (target)
 
@@ -297,4 +297,33 @@ pytest tests/test_rag.py -v
 
 OpenAI / Gemini: set `OPENAI_API_KEY` or `GEMINI_API_KEY` and `LLM_PROVIDER`. Unit tests do not call a live model.
 
-Stop here. Step 12 is FastAPI (`POST /index` `/search` `/ask`).
+## Step 12 — FastAPI
+
+Three endpoints wrapping the same functions as the scripts. No auth, no frontend.
+
+| Endpoint | Body | Returns |
+| --- | --- | --- |
+| `POST /index` | none | `{indexed_chunks}` |
+| `POST /search` | `{query, top_k, filters?, mode: vector\|hybrid, alpha?}` | `{results}` |
+| `POST /ask` | `{query, top_k, filters?, use_hybrid?, alpha?}` | `{answer, sources}` |
+
+`/ask` needs a reachable LLM (Ollama on `:11434` or API keys). Connection refused means Ollama is not running.
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn src.api.main:app --reload --port 8000
+```
+
+```bash
+curl -s -X POST localhost:8000/index
+curl -s -X POST localhost:8000/search -H 'content-type: application/json' \
+  -d '{"query":"Aerospike timeout during fraud evaluation","top_k":5}'
+curl -s -X POST localhost:8000/ask -H 'content-type: application/json' \
+  -d '{"query":"Why are fraud feature lookups timing out?"}'
+pytest tests/test_api.py -v
+```
+
+Docs: http://localhost:8000/docs
+
+Stop here. Step 13 is experiments (models, top-k, threshold, hybrid, filters).
