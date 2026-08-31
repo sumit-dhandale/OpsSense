@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 """Experiment 1: MiniLM-L6 vs MiniLM-L12 (both 384-d). Slow: downloads a second model."""
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from src.config import ROOT
 from src.embeddings.embedder import Embedder
 from src.eval.metrics import mean_recall, unique_incident_ids
 from src.ingestion.chunker import chunk_documents
 from src.ingestion.indexer import index_chunks
 from src.ingestion.loader import load_documents
 from src.retrieval.vector_search import search
+from src.settings import get_settings
 
-EVAL_PATH = ROOT / "tests" / "eval" / "queries.json"
+EVAL_PATH = get_settings().root / "tests" / "eval" / "queries.json"
 MODELS = [
     "sentence-transformers/all-MiniLM-L6-v2",
     "sentence-transformers/all-MiniLM-L12-v2",

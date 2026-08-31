@@ -1,11 +1,18 @@
 """Load incident markdown into a dict: metadata fields separate from full body."""
 
-from pathlib import Path
+import logging
 import re
+from pathlib import Path
 
-from src.config import DATA_DIR
+from src.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 _FIELD = re.compile(r"^(Title|Date|Service|Severity):\s*(.*)$", re.I)
+_SECTION_START = re.compile(
+    r"^(Symptoms|Impact|Logs|Root Cause|Resolution|Preventive Actions|##\s+).*$",
+    re.I,
+)
 
 SERVICE_ALIASES = {
     "fraud detection": "fraud",
@@ -30,13 +37,24 @@ def parse_markdown(text: str, source: str = "") -> dict:
     lines = text.strip().splitlines()
     incident_id = ""
     fields: dict[str, str] = {}
-    for i, line in enumerate(lines):
+    in_header = False
+    for line in lines:
         if line.startswith("# ") and not incident_id:
             incident_id = line[2:].strip()
+            in_header = True
             continue
-        m = _FIELD.match(line.strip())
+        if not in_header:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _SECTION_START.match(stripped):
+            break
+        m = _FIELD.match(stripped)
         if m:
             fields[m.group(1).lower()] = m.group(2).strip()
+        elif fields:
+            break
     if not incident_id:
         raise ValueError(f"missing incident id heading in {source}")
     return {
@@ -51,8 +69,18 @@ def parse_markdown(text: str, source: str = "") -> dict:
 
 
 def load_documents(data_dir: Path | None = None) -> list[dict]:
-    directory = data_dir or DATA_DIR
+    settings = get_settings()
+    directory = data_dir or settings.data_dir
     docs = []
+    errors: list[str] = []
     for path in sorted(directory.glob("*.md")):
-        docs.append(parse_markdown(path.read_text(encoding="utf-8"), source=str(path)))
+        try:
+            docs.append(
+                parse_markdown(path.read_text(encoding="utf-8"), source=str(path))
+            )
+        except ValueError as exc:
+            errors.append(f"{path.name}: {exc}")
+            logger.warning("Skipping %s: %s", path.name, exc)
+    if errors:
+        logger.warning("Failed to load %d file(s): %s", len(errors), "; ".join(errors))
     return docs

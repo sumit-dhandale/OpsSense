@@ -1,11 +1,12 @@
 from sentence_transformers import SentenceTransformer
 
-from src.config import EMBEDDING_MODEL, VECTOR_SIZE
+from src.settings import get_settings
 
 
 class Embedder:
     def __init__(self, model_name: str | None = None):
-        self.model_name = model_name or EMBEDDING_MODEL
+        settings = get_settings()
+        self.model_name = model_name or settings.embedding_model
         self.model = SentenceTransformer(self.model_name)
 
     def embed(self, text: str) -> list[float]:
@@ -19,4 +20,4 @@ class Embedder:
 
     @property
     def dim(self) -> int:
-        return VECTOR_SIZE
+        return self.model.get_sentence_embedding_dimension()

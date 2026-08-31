@@ -1,6 +1,5 @@
 from src.retrieval.keyword_search import KeywordIndex
 
-
 CHUNKS = [
     {
         "chunk_id": "INC-2841:0",

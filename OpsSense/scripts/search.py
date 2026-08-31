@@ -2,11 +2,8 @@
 """Vector search: python scripts/search.py 'Aerospike timeout during fraud evaluation'"""
 import argparse
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from src.retrieval.filters import normalize_filters
 from src.retrieval.hybrid_search import hybrid_search
 from src.retrieval.keyword_search import keyword_search
 from src.retrieval.vector_search import search
@@ -17,7 +14,12 @@ def main() -> None:
     p.add_argument("query")
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--mode", choices=["vector", "keyword", "hybrid"], default="vector")
-    p.add_argument("--alpha", type=float, default=None, help="hybrid: weight on vector (default 0.7)")
+    p.add_argument(
+        "--alpha",
+        type=float,
+        default=None,
+        help="deprecated; hybrid uses RRF",
+    )
     p.add_argument("--filter", action="append", default=[], help="key=value, e.g. service=fraud")
     p.add_argument("--score-threshold", type=float, default=None)
     args = p.parse_args()
@@ -25,7 +27,7 @@ def main() -> None:
     for item in args.filter:
         key, value = item.split("=", 1)
         filters[key] = value
-    filters = filters or None
+    filters = normalize_filters(filters or None)
     if args.mode == "keyword":
         hits = keyword_search(args.query, top_k=args.top_k, filters=filters)
     elif args.mode == "hybrid":
@@ -44,7 +46,15 @@ def main() -> None:
         )
         snippet = (hit.get("text") or "").replace("\n", " ")[:180]
         print(f"   {snippet}...\n")
-    print(json.dumps([{"score": h["score"], "incident_id": h["incident_id"], "title": h["title"]} for h in hits], indent=2))
+    print(
+        json.dumps(
+            [
+                {"score": h["score"], "incident_id": h["incident_id"], "title": h["title"]}
+                for h in hits
+            ],
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

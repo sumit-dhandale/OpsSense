@@ -1,15 +1,32 @@
-from src.config import HYBRID_ALPHA
+import logging
+
+from src.deps import get_keyword_index
 from src.retrieval.keyword_search import KeywordIndex
+from src.retrieval.reranker import rerank
 from src.retrieval.vector_search import search as vector_search
+from src.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
-def minmax(scores: list[float]) -> list[float]:
-    if not scores:
-        return []
-    lo, hi = min(scores), max(scores)
-    if hi - lo < 1e-12:
-        return [1.0 for _ in scores]
-    return [(s - lo) / (hi - lo) for s in scores]
+def reciprocal_rank_fusion(
+    rank_lists: list[list[dict]], k: int | None = None
+) -> list[dict]:
+    settings = get_settings()
+    k = k if k is not None else settings.rrf_k
+    scores: dict[str, float] = {}
+    rows: dict[str, dict] = {}
+    for hits in rank_lists:
+        for rank, hit in enumerate(hits, start=1):
+            key = hit.get("chunk_id") or f"{hit['incident_id']}:{hit.get('chunk_index')}"
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
+            rows.setdefault(key, hit)
+    merged = []
+    for key, score in scores.items():
+        row = {**rows[key], "score": score}
+        merged.append(row)
+    merged.sort(key=lambda r: r["score"], reverse=True)
+    return merged
 
 
 def hybrid_search(
@@ -20,28 +37,17 @@ def hybrid_search(
     candidate_k: int | None = None,
     keyword_index: KeywordIndex | None = None,
 ) -> list[dict]:
-    """final = alpha * vector + (1-alpha) * keyword after per-list min-max."""
-    a = HYBRID_ALPHA if alpha is None else alpha
+    """RRF merge of vector + keyword lists, optional cross-encoder rerank."""
+    if alpha is not None:
+        logger.warning(
+            "hybrid_search alpha=%s is deprecated and ignored; using RRF", alpha
+        )
+    settings = get_settings()
     pool = candidate_k or max(top_k * 4, 20)
     vec_hits = vector_search(query, top_k=pool, filters=filters)
-    kw_index = keyword_index or KeywordIndex()
+    kw_index = keyword_index or get_keyword_index()
     kw_hits = kw_index.search(query, top_k=pool, filters=filters)
-
-    vec_norm = minmax([h["score"] for h in vec_hits])
-    kw_norm = minmax([h["score"] for h in kw_hits])
-    merged: dict[str, dict] = {}
-    for hit, n in zip(vec_hits, vec_norm):
-        key = hit.get("chunk_id") or f"{hit['incident_id']}:{hit.get('chunk_index')}"
-        merged[key] = {**hit, "vector_score": n, "keyword_score": 0.0}
-    for hit, n in zip(kw_hits, kw_norm):
-        key = hit.get("chunk_id") or f"{hit['incident_id']}:{hit.get('chunk_index')}"
-        if key in merged:
-            merged[key]["keyword_score"] = n
-        else:
-            merged[key] = {**hit, "vector_score": 0.0, "keyword_score": n}
-    ranked = []
-    for row in merged.values():
-        row["score"] = a * row["vector_score"] + (1 - a) * row["keyword_score"]
-        ranked.append(row)
-    ranked.sort(key=lambda r: r["score"], reverse=True)
-    return ranked[:top_k]
+    merged = reciprocal_rank_fusion([vec_hits, kw_hits])
+    if settings.rerank_enabled and merged:
+        return rerank(query, merged, top_k=top_k)
+    return merged[:top_k]

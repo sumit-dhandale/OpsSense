@@ -1,6 +1,5 @@
 from src.ingestion.loader import load_documents, parse_markdown
 
-
 SAMPLE = """# INC-2841
 
 Title: Aerospike Timeout During Peak Traffic
@@ -19,6 +18,7 @@ def test_parse_markdown_metadata():
     assert doc["title"].startswith("Aerospike")
     assert doc["service"] == "fraud"
     assert doc["severity"] == "SEV1"
+    assert doc["date"] == "2024-11-12"
     assert "Fraud feature" in doc["content"]
 
 

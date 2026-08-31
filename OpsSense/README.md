@@ -1,387 +1,55 @@
-# Incident Memory
+# Incident Memory (OpsSense)
 
-RAG lab: given a production error snippet, retrieve similar historical incidents.
+RAG system for retrieving similar historical production incidents and generating structured investigation guidance.
 
-We build it **one layer at a time**. Current stop: **Step 13 — experiments** (full pipeline).
-
-## Architecture (target)
-
-```mermaid
-flowchart TB
-  subgraph ingest [Ingestion]
-    MD[Markdown incidents]
-    Loader[loader]
-    Chunker[chunker]
-    Embed[embedder]
-    Indexer[indexer]
-  end
-  subgraph store [Qdrant]
-    Col[collection incident_memory]
-  end
-  subgraph retrieve [Retrieval]
-    Vec[vector_search]
-    Kw[keyword BM25]
-    Hyb[hybrid_search]
-    Filt[payload filters]
-  end
-  subgraph rag [RAG]
-    Ctx[context]
-    LLM[Ollama OpenAI Gemini]
-  end
-  MD --> Loader --> Chunker --> Embed --> Indexer --> Col
-  Query[query] --> Embed
-  Query --> Kw
-  Embed --> Vec
-  Col --> Vec
-  Col --> Filt
-  Vec --> Hyb
-  Kw --> Hyb
-  Hyb --> Ctx --> LLM
-```
-
-## Step 1 — What a vector database is
-
-Qdrant stores **points**. Each point later will be:
-
-- `id`
-- `vector` (a list of floats from an embedding model)
-- `payload` (JSON metadata: incident id, service, severity, chunk text)
-
-A **collection** is a named vector space with a fixed size and distance metric. We create `incident_memory` now, empty:
-
-- size **384** — matches `all-MiniLM-L6-v2` in Step 4. Wrong size later = insert errors.
-- distance **Cosine** — MiniLM cares about *direction* of meaning, not vector length. Cosine is not a probability.
-
-**ANN / HNSW (high level):** Qdrant does not compare your query to every stored vector once you have many points. It walks a graph of neighbors (HNSW) and returns *approximately* the nearest ones. Fast enough to matter at millions of points; our 20 docs would be fine with brute force. We still use Qdrant so the production shape is visible.
-
-We are **not** embedding or searching yet. Step 1 only proves: Docker Qdrant is up, Python can create the collection.
-
-## Setup and test
-
-Docker must be running (Docker Desktop or similar).
+## Quickstart
 
 ```bash
-cd OpsSense   # this repo
-docker compose up -d
+cd OpsSense
+docker compose up -d qdrant
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[dev]"
 python scripts/setup_qdrant.py
-pytest tests/test_qdrant_setup.py -v
-```
-
-Success looks like: `Qdrant reachable`, collection Cosine size 384, pytest passed.
-
-Dashboard: http://localhost:6333/dashboard
-
-## Step 2 — Document loading
-
-Raw markdown is not a search record. The loader (`src/ingestion/loader.py`) reads `data/incidents/*.md` and returns a **normalized dict**:
-
-```json
-{
-  "incident_id": "INC-2841",
-  "title": "Aerospike Timeout During Peak Traffic",
-  "service": "fraud",
-  "severity": "SEV1",
-  "content": "..."
-}
-```
-
-**Why preprocess.** Files have headings, blank lines, and human labels (`Fraud Detection` vs `fraud`). Retrieval later needs stable keys for filters and a single `content` string to chunk.
-
-**Why metadata is separate from the body.** `service` and `severity` are exact fields for Qdrant payload filters (Step 7). If you only stuffed them into the embedded text, a query could not reliably say “only SEV1 fraud.” The body still contains those words for semantic search; metadata is the structured copy.
-
-**Why similar incidents.** Several docs mention Aerospike timeouts, payment latency, and pool exhaustion with *different* root causes. That makes retrieval non-trivial later.
-
-Qdrant is unused this step.
-
-```bash
-source .venv/bin/activate
-python scripts/load_documents.py
-pytest tests/test_loader.py -v
-```
-
-Expect ~19 documents and parsed `INC-2841` with `service: fraud`.
-
-## Step 3 — Chunking
-
-An embedding model turns **one string** into **one vector**. If that string is a whole postmortem, Aerospike timeouts get averaged with “added Grafana dashboards.” The query then matches a blur.
-
-**Chunk size** here is a count of whitespace-separated words (a stand-in for tokens, not MiniLM’s tokenizer). Default **500** with **100 overlap**.
-
-**Overlap** repeats the tail of chunk *n* at the start of chunk *n+1* so a sentence split on a boundary still exists intact in at least one chunk. Step is `chunk_size - overlap` (400 words).
-
-- **Too small:** fragments with no complete thought; more chunks; more noise in top-k.
-- **Too large:** mixed topics in one vector; the query can hit the wrong half of the doc.
-
-Every chunk copies metadata:
-
-```json
-{
-  "chunk_id": "INC-2841:2",
-  "incident_id": "INC-2841",
-  "service": "fraud",
-  "severity": "SEV1",
-  "chunk_index": 2,
-  "text": "..."
-}
-```
-
-Our sample incidents are short, so default 500 often yields **one chunk per file**. The demo script uses size 40 so you can see overlap.
-
-```bash
-source .venv/bin/activate
-python scripts/chunk_documents.py
-pytest tests/test_chunker.py -v
-```
-
-## Step 4 — Embeddings
-
-An **embedding** is a list of floats (here **384** dimensions). The model maps text into a space where paraphrases land nearby even if they share few keywords.
-
-`all-MiniLM-L6-v2` via `sentence-transformers`. API:
-
-- `embed(text) -> vector`
-- `embed_batch(texts) -> vectors`
-
-We set `normalize_embeddings=True`, so **cosine similarity** equals **dot product**. **Euclidean** distance would care about vector length; we do not use it. Qdrant’s collection (Step 1) already uses **Cosine** for the same reason.
-
-A cosine of `0.8` is **not** “80% chance this is the RCA.” It only means “closer than 0.2 in this space.”
-
-Experiment: two ops phrases vs sports — keyword overlap is weak on the first pair, semantic closeness should still win.
-
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-python scripts/embedding_similarity.py
-pytest tests/test_embedder.py -v
-```
-
-First run downloads the model. Qdrant is unused this step.
-
-## Step 5 — Store embeddings in Qdrant
-
-A vector database stores three things per **point**:
-
-1. `id` — UUID derived from `chunk_id`
-2. `vector` — 384 floats from MiniLM
-3. `payload` — JSON for display and later filters (not used in the distance calculation)
-
-```json
-{
-  "incident_id": "INC-2841",
-  "service": "fraud",
-  "severity": "SEV1",
-  "title": "Aerospike Timeout During Peak Traffic",
-  "chunk_index": 0,
-  "text": "..."
-}
-```
-
-Flow: load markdown → chunk → `embed_batch` → `upsert`. Recreate the collection so reruns stay consistent.
-
-Qdrant indexes the vectors (HNSW) so later search does not scan every point. We still do not query in this step — only write.
-
-```bash
-source .venv/bin/activate
-docker compose up -d
-python scripts/index_documents.py
-pytest tests/test_indexer.py -v
-```
-
-Expect `points_count` equal to the number of chunks (about 19 with default 500-word windows). Dashboard: http://localhost:6333/dashboard
-
-## Step 6 — Vector search
-
-```
-query → MiniLM → query vector → Qdrant ANN (cosine) → top_k chunks
-```
-
-`search(query, top_k=5)` embeds the query with the **same** model used at index time (different model = garbage neighbors). Qdrant returns the nearest stored vectors. Each hit is `score`, `incident_id`, `title`, `service`, `severity`, `text`.
-
-**Score** is cosine similarity in this collection (higher = closer direction). It is **not** a probability and not “confidence this is the RCA.” Rank order matters more than the absolute number. Near-miss incidents can still score high because the corpus is small and thematically overlapping.
-
-Requires Step 5 data already in `incident_memory`.
-
-```bash
-source .venv/bin/activate
-python scripts/search.py "Fraud feature lookups are timing out because Aerospike is responding slowly."
-pytest tests/test_vector_search.py -v
-```
-
-Expect INC-2841 / INC-1923 / similar Aerospike-fraud incidents near the top.
-
-## Step 7 — Metadata filtering
-
-**Semantic search** ranks by meaning. A payments Redis timeout can still sit next to an Aerospike fraud incident.
-
-**Metadata filtering** is an exact match on payload (`service`, `severity`) *with* ANN. Qdrant only considers points that satisfy `must` conditions, then ranks those by cosine.
-
-```python
-search("Aerospike timeout", top_k=5, filters={"service": "fraud", "severity": "SEV1"})
-```
-
-Use filters when the operator already knows the service or SEV. Do not use them to express “sounds like fraud” — that is the vector’s job.
-
-```bash
-source .venv/bin/activate
-python scripts/search.py "Aerospike timeout"
-python scripts/search.py "Aerospike timeout" --filter service=fraud --filter severity=SEV1
-pytest tests/test_vector_search.py -v
-```
-
-Unfiltered top-k can include `payments` / `sessions`. Filtered results should all be `fraud` `SEV1` (e.g. INC-2841, INC-1407, INC-1744).
-
-## Step 8 — Retrieval evaluation
-
-Gold file: [`tests/eval/queries.json`](tests/eval/queries.json) — 10 queries, each with labeled relevant incident IDs.
-
-Hits are **chunks**. We collapse to unique `incident_id`s in rank order, then:
-
-**Recall@k** = (gold IDs that appear in the top-k unique incidents) / (number of gold IDs), averaged over queries.
-
-Compare chunk sizes **200 / 500 / 1000** with overlap = 20% of size. Re-index into `incident_memory_eval` so the Step 5 collection is left alone.
-
-Chunk size changes whether a distinctive sentence sits in a clean vector or is diluted (or split). There is no universally best size; this table is the measurement.
-
-```bash
-source .venv/bin/activate
-python scripts/eval_chunking.py
-pytest tests/test_eval_metrics.py -v
-```
-
-The script prints a table (`chunk`, `overlap`, `n` chunks, `R@3`, `R@5`). First run reloads MiniLM and indexes three times.
-
-## Step 9 — Keyword search (BM25)
-
-Vector search matches meaning. **BM25** matches query *terms* that actually appear in the chunk (with a classic IR weighting: rare words count more than “the”). We run it in-process with `rank_bm25` over the same texts stored in Qdrant — no extra search cluster.
-
-BM25 **scores are not cosine**. Do not compare `12.4` to `0.77` as if they were the same unit.
-
-- **Keyword wins:** exact tokens — `Aerospike`, `INC-2841`, error class names.
-- **Vector wins:** paraphrase — “feature store became slow” still finds Aerospike compaction if those words never appear together as the title’s synonym in other docs; conversely BM25 nails INC-1510 when the phrase is in the body.
-
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-python scripts/search.py "Aerospike timeout" --mode keyword
-python scripts/search.py "Aerospike timeout" --mode vector
-python scripts/search.py "feature store became slow" --mode keyword
-python scripts/search.py "feature store became slow" --mode vector
-pytest tests/test_keyword_search.py -v
-```
-
-Needs the Step 5 index for the CLI (scrolls Qdrant). Unit tests use a tiny in-memory corpus.
-
-## Step 10 — Hybrid search
-
-Vector and keyword lists use **different score scales**. Before mixing we min-max normalize **each list** to `[0, 1]`, then:
-
-`final = alpha * vector_score + (1 - alpha) * keyword_score`
-
-Default `alpha = 0.7` (favor semantic). A chunk only in one list gets `0` for the other after merge.
-
-Why both: paraphrase without shared tokens still ranks via vectors; `INC-2841`, `Aerospike`, and error codes still rank via BM25. Semantic-only often **drops** exact IDs because MiniLM treats them as noise.
-
-```bash
-source .venv/bin/activate
-python scripts/search.py "INC-2841 Aerospike timeout" --mode hybrid --alpha 0.7
-python scripts/search.py "feature store became slow" --mode hybrid
-pytest tests/test_hybrid_search.py -v
-```
-
-Compare to `--mode vector` and `--mode keyword` on the same query.
-
-## Step 11 — RAG
-
-Retrieval is still the source of facts. The LLM only **writes** over the top-k chunks.
-
-```
-query → hybrid (or vector) search → context string → LLM → answer + sources
-```
-
-The system prompt requires: use only retrieved text; similarity vs difference; historical RCA and fix; investigation ideas labeled as **hypotheses**; no invented RCA; say insufficient evidence if hits are weak.
-
-`LLM_PROVIDER=ollama|openai|gemini` (default **ollama**). HTTP via `httpx`, no LangChain.
-
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-# Ollama running locally, e.g. `ollama run llama3.2`
-export LLM_PROVIDER=ollama
-python scripts/ask.py "Why are fraud feature lookups timing out?"
-pytest tests/test_rag.py -v
-```
-
-OpenAI / Gemini: set `OPENAI_API_KEY` or `GEMINI_API_KEY` and `LLM_PROVIDER`. Unit tests do not call a live model.
-
-## Step 12 — FastAPI
-
-Three endpoints wrapping the same functions as the scripts. No auth, no frontend.
-
-| Endpoint | Body | Returns |
-| --- | --- | --- |
-| `POST /index` | none | `{indexed_chunks}` |
-| `POST /search` | `{query, top_k, filters?, mode: vector\|hybrid, alpha?}` | `{results}` |
-| `POST /ask` | `{query, top_k, filters?, use_hybrid?, alpha?}` | `{answer, sources}` |
-
-`/ask` needs a reachable LLM (Ollama on `:11434` or API keys). Connection refused means Ollama is not running.
-
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
+python scripts/index_documents.py --recreate   # first run or after schema changes
+pytest -m "not integration" -v
 uvicorn src.api.main:app --reload --port 8000
 ```
 
 ```bash
-curl -s -X POST localhost:8000/index
+curl -s localhost:8000/health
 curl -s -X POST localhost:8000/search -H 'content-type: application/json' \
-  -d '{"query":"Aerospike timeout during fraud evaluation","top_k":5}'
+  -d '{"query":"Aerospike timeout during fraud evaluation","top_k":5,"mode":"hybrid"}'
 curl -s -X POST localhost:8000/ask -H 'content-type: application/json' \
   -d '{"query":"Why are fraud feature lookups timing out?"}'
-pytest tests/test_api.py -v
 ```
 
-Docs: http://localhost:8000/docs
+CLI:
 
-## Step 13 — Experiments
+```bash
+python scripts/search.py "Aerospike timeout" --mode hybrid
+python scripts/ask.py "Why are fraud feature lookups timing out?"
+python scripts/run_experiments.py
+```
 
-Index first (`python scripts/index_documents.py`). Gold set: [`tests/eval/queries.json`](tests/eval/queries.json). Fill the numbers from **your** run (models and Qdrant vary slightly).
+## Docs
 
-| # | What | Command | What to look for |
-| --- | --- | --- | --- |
-| 1 | Embedding models | `python scripts/compare_models.py` | L6 vs L12 MiniLM Recall@3/@5. Larger is not always better on 19 docs. |
-| 2 | Chunk size 200/500/1000 | `python scripts/eval_chunking.py` | These postmortems are short; 200/500/1000 often collapse to one chunk. |
-| 3 | Top-k 1/3/5/10 | `python scripts/run_experiments.py` | Recall rises with k; more noise in the RAG context. |
-| 4 | Score threshold | same + `python scripts/search.py "..." --score-threshold 0.7` | High cutoff drops useful near-misses. Cosine is not a probability. |
-| 5 | Keyword vs vector vs hybrid | `run_experiments.py` | Exact tokens vs paraphrase vs mix. |
-| 6 | Metadata filter | same | `service=fraud` removes Redis/Postgres false friends. |
+- [Step-by-step tutorial](docs/tutorial.md) — original lab walkthrough (Steps 1–13)
+- [Architecture](docs/architecture.md) — module map and data flow
 
-`run_experiments.py` also prints a demo ranking for `Aerospike timeout`.
+## Key changes (v0.2)
 
-## Limitations
-
-- Word-split ≠ MiniLM tokens.
-- ~19 docs; in-memory BM25.
-- MiniLM is small; jargon can mismatch.
-- Hybrid is a linear mix, not reciprocal rank fusion.
-- The LLM can still ignore the prompt; we do not cite spans.
-- Eval gold is hand-labeled and overlapping on purpose.
-
-## Possible improvements
-
-RRF hybrid; real tokenizer chunking; cross-encoder rerank; parent-document retrieval; a larger labeled set. Not required to learn the pipeline.
+- Cached embedder / Qdrant client / BM25 index (no cold-start per request)
+- RRF hybrid search + optional cross-encoder rerank (`RERANK_ENABLED`)
+- Section-aware chunking with parent-document context in RAG
+- Structured JSON `/ask` response with citation validation and retrieval guardrail
+- `GET /health`, input validation, safe default `recreate=false` on `/index`
 
 ## Layout
 
 ```
-data/incidents/          # postmortems
-src/ingestion/           # load, chunk, index
-src/embeddings/          # sentence-transformers
-src/retrieval/           # vector, BM25, hybrid
-src/rag/generator.py     # prompt + providers
-src/api/main.py          # three POSTs
-src/qdrant_store.py      # collection + cosine
-scripts/                 # setup, index, search, ask, experiments
-tests/eval/queries.json  # gold queries
+src/ingestion/     load, chunk, index
+src/retrieval/     vector, BM25, RRF hybrid, reranker
+src/rag/           structured generator
+src/api/main.py    /health, /index, /search, /ask
+tests/eval/        gold queries
 ```

@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """Experiments 3–6 on the existing incident_memory index (run index_documents.py first)."""
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from src.config import ROOT
-from src.eval.metrics import mean_recall, unique_incident_ids
+from src.eval.metrics import mean_mrr, mean_ndcg, mean_recall, unique_incident_ids
 from src.retrieval.hybrid_search import hybrid_search
 from src.retrieval.keyword_search import keyword_search
 from src.retrieval.vector_search import search
+from src.settings import get_settings
 
-EVAL_PATH = ROOT / "tests" / "eval" / "queries.json"
+EVAL_PATH = get_settings().root / "tests" / "eval" / "queries.json"
 
 
 def _pairs(search_fn, queries, k=10, **kwargs):
@@ -30,6 +26,7 @@ def main() -> None:
     pairs = _pairs(search, queries, k=10)
     for k in (1, 3, 5, 10):
         print(f"  Recall@{k}: {mean_recall(pairs, k):.3f}")
+    print(f"  MRR@5: {mean_mrr(pairs, 5):.3f}  nDCG@5: {mean_ndcg(pairs, 5):.3f}")
 
     print("\n=== Experiment 4: score threshold (vector, top 10) ===")
     for thr in (None, 0.3, 0.5, 0.7):
@@ -43,15 +40,17 @@ def main() -> None:
             f"Recall@5={mean_recall(pairs_t, 5):.3f}"
         )
 
-    print("\n=== Experiment 5: keyword vs vector vs hybrid ===")
+    print("\n=== Experiment 5: keyword vs vector vs hybrid (RRF) ===")
     for name, fn, extra in (
         ("keyword", keyword_search, {}),
         ("vector", search, {}),
-        ("hybrid a=0.7", hybrid_search, {"alpha": 0.7}),
-        ("hybrid a=0.5", hybrid_search, {"alpha": 0.5}),
+        ("hybrid RRF", hybrid_search, {}),
     ):
         p = _pairs(fn, queries, k=10, **extra)
-        print(f"  {name:16} R@3={mean_recall(p, 3):.3f}  R@5={mean_recall(p, 5):.3f}")
+        print(
+            f"  {name:16} R@3={mean_recall(p, 3):.3f}  R@5={mean_recall(p, 5):.3f}  "
+            f"MRR@5={mean_mrr(p, 5):.3f}"
+        )
 
     print("\n=== Experiment 6: metadata filter service=fraud ===")
     fraud_q = [

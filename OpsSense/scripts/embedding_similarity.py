@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 """Semantic similarity vs keyword overlap on three phrases."""
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 import numpy as np
 
-from src.embeddings.embedder import Embedder
+from src.deps import get_embedder
 
 
 def cosine(a, b) -> float:
@@ -21,7 +16,7 @@ def main() -> None:
         "DB connection pool exhausted",
         "football match tonight",
     ]
-    embedder = Embedder()
+    embedder = get_embedder()
     vecs = embedder.embed_batch(texts)
     print(f"model={embedder.model_name} dim={len(vecs[0])}\n")
     for i, ti in enumerate(texts):

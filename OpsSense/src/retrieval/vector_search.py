@@ -1,20 +1,24 @@
-from qdrant_client.models import FieldCondition, Filter, MatchValue
-
-from src.config import COLLECTION
+from src.deps import get_embedder
 from src.embeddings.embedder import Embedder
 from src.qdrant_store import get_client
+from src.retrieval.filters import normalize_filters, payload_filter
+from src.settings import get_settings
 
 
-def payload_filter(filters: dict | None) -> Filter | None:
-    """Exact match on payload fields (metadata), not on embedding space."""
-    if not filters:
-        return None
-    must = [
-        FieldCondition(key=key, match=MatchValue(value=value))
-        for key, value in filters.items()
-        if value not in (None, "")
-    ]
-    return Filter(must=must) if must else None
+def _hit_from_payload(score: float, payload: dict) -> dict:
+    return {
+        "score": score,
+        "incident_id": payload.get("incident_id"),
+        "title": payload.get("title"),
+        "date": payload.get("date"),
+        "service": payload.get("service"),
+        "severity": payload.get("severity"),
+        "section": payload.get("section"),
+        "chunk_index": payload.get("chunk_index"),
+        "chunk_id": payload.get("chunk_id"),
+        "text": payload.get("text"),
+        "parent_text": payload.get("parent_text", ""),
+    }
 
 
 def search(
@@ -25,29 +29,19 @@ def search(
     collection: str | None = None,
     score_threshold: float | None = None,
 ) -> list[dict]:
-    embedder = embedder or Embedder()
+    settings = get_settings()
+    embedder = embedder or get_embedder()
     client = get_client()
+    cleaned = normalize_filters(filters)
     response = client.query_points(
-        collection_name=collection or COLLECTION,
+        collection_name=collection or settings.qdrant_collection,
         query=embedder.embed(query),
         limit=top_k,
-        query_filter=payload_filter(filters),
+        query_filter=payload_filter(cleaned),
         score_threshold=score_threshold,
         with_payload=True,
     )
-    results = []
-    for hit in response.points:
-        payload = hit.payload or {}
-        results.append(
-            {
-                "score": float(hit.score),
-                "incident_id": payload.get("incident_id"),
-                "title": payload.get("title"),
-                "service": payload.get("service"),
-                "severity": payload.get("severity"),
-                "chunk_index": payload.get("chunk_index"),
-                "chunk_id": payload.get("chunk_id"),
-                "text": payload.get("text"),
-            }
-        )
-    return results
+    return [
+        _hit_from_payload(float(hit.score), hit.payload or {})
+        for hit in response.points
+    ]

@@ -4,27 +4,23 @@
 Uses collection incident_memory_eval so it does not wipe your Step 5 index.
 """
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from src.config import ROOT
-from src.embeddings.embedder import Embedder
-from src.eval.metrics import mean_recall, unique_incident_ids
+from src.deps import get_embedder
+from src.eval.metrics import mean_mrr, mean_ndcg, mean_recall, unique_incident_ids
 from src.ingestion.chunker import chunk_documents
 from src.ingestion.indexer import index_chunks
 from src.ingestion.loader import load_documents
 from src.retrieval.vector_search import search
+from src.settings import get_settings
 
-EVAL_PATH = ROOT / "tests" / "eval" / "queries.json"
+EVAL_PATH = get_settings().root / "tests" / "eval" / "queries.json"
 COLLECTION = "incident_memory_eval"
 
 
 def run_chunk_eval() -> list[dict]:
     queries = json.loads(EVAL_PATH.read_text())
     docs = load_documents()
-    embedder = Embedder()
+    embedder = get_embedder()
     rows = []
     for size in (200, 500, 1000):
         overlap = max(1, size // 5)
@@ -43,6 +39,8 @@ def run_chunk_eval() -> list[dict]:
                 "chunks": len(chunks),
                 "recall@3": round(mean_recall(pairs, 3), 3),
                 "recall@5": round(mean_recall(pairs, 5), 3),
+                "mrr@5": round(mean_mrr(pairs, 5), 3),
+                "ndcg@5": round(mean_ndcg(pairs, 5), 3),
             }
         )
     return rows
@@ -50,11 +48,12 @@ def run_chunk_eval() -> list[dict]:
 
 def main() -> None:
     table = run_chunk_eval()
-    print(f"{'chunk':>8} {'overlap':>8} {'n':>6} {'R@3':>8} {'R@5':>8}")
+    print(f"{'chunk':>8} {'overlap':>8} {'n':>6} {'R@3':>8} {'R@5':>8} {'MRR@5':>8} {'nDCG@5':>8}")
     for r in table:
         print(
             f"{r['chunk_size']:>8} {r['overlap']:>8} {r['chunks']:>6} "
-            f"{r['recall@3']:>8.3f} {r['recall@5']:>8.3f}"
+            f"{r['recall@3']:>8.3f} {r['recall@5']:>8.3f} "
+            f"{r['mrr@5']:>8.3f} {r['ndcg@5']:>8.3f}"
         )
 
 

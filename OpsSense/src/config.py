@@ -1,29 +1,43 @@
-import os
-from pathlib import Path
+"""Backward-compatible shim; prefer src.settings."""
 
-from dotenv import load_dotenv
+from src.settings import get_settings
 
-load_dotenv()
+_settings = get_settings()
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data" / "incidents"
+ROOT = _settings.root
+DATA_DIR = _settings.data_dir
+QDRANT_URL = _settings.qdrant_url
+COLLECTION = _settings.qdrant_collection
+EMBEDDING_MODEL = _settings.embedding_model
+CHUNK_SIZE = _settings.chunk_size
+CHUNK_OVERLAP = _settings.chunk_overlap
+HYBRID_ALPHA = _settings.hybrid_alpha
+LLM_PROVIDER = _settings.llm_provider
+OLLAMA_URL = _settings.ollama_url
+OLLAMA_MODEL = _settings.ollama_model
+OPENAI_API_KEY = _settings.openai_api_key
+OPENAI_MODEL = _settings.openai_model
+GEMINI_API_KEY = _settings.gemini_api_key
+GEMINI_MODEL = _settings.gemini_model
+RERANK_ENABLED = _settings.rerank_enabled
+RERANK_MODEL = _settings.rerank_model
+RETRIEVAL_MIN_SCORE = _settings.retrieval_min_score
+RRF_K = _settings.rrf_k
 
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-COLLECTION = os.getenv("QDRANT_COLLECTION", "incident_memory")
-# MiniLM-L6-v2 (Step 4) emits 384-d vectors. Collection size is fixed at create time.
-VECTOR_SIZE = 384
-EMBEDDING_MODEL = os.getenv(
-    "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
-)
-# Whitespace words as a cheap token stand-in (not the MiniLM tokenizer).
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "500"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
-HYBRID_ALPHA = float(os.getenv("HYBRID_ALPHA", "0.7"))
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+def _vector_size() -> int:
+    from src.deps import get_embedder
+
+    return get_embedder().dim
+
+
+# Lazy property-like access for tests that import VECTOR_SIZE at module level.
+class _VectorSize:
+    def __int__(self) -> int:
+        return _vector_size()
+
+    def __repr__(self) -> str:
+        return str(int(self))
+
+
+VECTOR_SIZE = _VectorSize()  # type: ignore[assignment]

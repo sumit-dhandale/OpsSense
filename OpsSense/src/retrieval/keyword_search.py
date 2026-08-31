@@ -2,8 +2,9 @@
 
 from rank_bm25 import BM25Okapi
 
-from src.config import COLLECTION
 from src.qdrant_store import get_client
+from src.retrieval.filters import matches_filters, normalize_filters
+from src.settings import get_settings
 
 
 def _tokenize(text: str) -> list[str]:
@@ -11,8 +12,9 @@ def _tokenize(text: str) -> list[str]:
 
 
 def load_chunks_from_qdrant(collection: str | None = None) -> list[dict]:
+    settings = get_settings()
     client = get_client()
-    name = collection or COLLECTION
+    name = collection or settings.qdrant_collection
     chunks = []
     offset = None
     while True:
@@ -30,10 +32,13 @@ def load_chunks_from_qdrant(collection: str | None = None) -> list[dict]:
                     "chunk_id": payload.get("chunk_id"),
                     "incident_id": payload.get("incident_id"),
                     "title": payload.get("title"),
+                    "date": payload.get("date"),
                     "service": payload.get("service"),
                     "severity": payload.get("severity"),
+                    "section": payload.get("section"),
                     "chunk_index": payload.get("chunk_index"),
                     "text": payload.get("text", ""),
+                    "parent_text": payload.get("parent_text", ""),
                 }
             )
         if offset is None:
@@ -43,20 +48,25 @@ def load_chunks_from_qdrant(collection: str | None = None) -> list[dict]:
 
 class KeywordIndex:
     def __init__(self, chunks: list[dict] | None = None, collection: str | None = None):
-        self.chunks = chunks if chunks is not None else load_chunks_from_qdrant(collection)
+        self.chunks = (
+            chunks if chunks is not None else load_chunks_from_qdrant(collection)
+        )
         self._bm25 = (
-            BM25Okapi([_tokenize(c["text"]) for c in self.chunks]) if self.chunks else None
+            BM25Okapi([_tokenize(c["text"]) for c in self.chunks])
+            if self.chunks
+            else None
         )
 
-    def search(self, query: str, top_k: int = 5, filters: dict | None = None) -> list[dict]:
+    def search(
+        self, query: str, top_k: int = 5, filters: dict | None = None
+    ) -> list[dict]:
         if not self.chunks or self._bm25 is None:
             return []
+        cleaned = normalize_filters(filters)
         scores = self._bm25.get_scores(_tokenize(query))
         ranked = []
         for chunk, score in zip(self.chunks, scores):
-            if filters and any(
-                value and chunk.get(key) != value for key, value in filters.items()
-            ):
+            if not matches_filters(chunk, cleaned):
                 continue
             ranked.append({**chunk, "score": float(score)})
         ranked.sort(key=lambda r: r["score"], reverse=True)
